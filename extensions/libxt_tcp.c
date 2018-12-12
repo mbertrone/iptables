@@ -275,6 +275,29 @@ print_tcpf(uint8_t flags)
 }
 
 static void
+print_tcpf_pcn(uint8_t flags, char * prefix)
+{
+	int have_flag = 0;
+
+	while (flags) {
+		unsigned int i;
+
+		for (i = 0; (flags & tcp_flag_names[i].flag) == 0; i++);
+
+		if (have_flag)
+			printf(" ");
+			// printf(",");
+		printf("%s%s", prefix, tcp_flag_names[i].name);
+		have_flag = 1;
+
+		flags &= ~tcp_flag_names[i].flag;
+	}
+
+	// if (!have_flag)
+	// 	printf("NONE");
+}
+
+static void
 print_flags(uint8_t mask, uint8_t cmp, int invert, int numeric)
 {
 	if (mask || invert) {
@@ -322,11 +345,13 @@ static void tcp_save(const void *ip, const struct xt_entry_match *match)
 			printf(" !");
 		if (tcpinfo->spts[0]
 		    != tcpinfo->spts[1])
-			printf(" --sport %u:%u",
+			// printf(" --sport %u:%u",
+			printf(" sport=%u:%u",
 			       tcpinfo->spts[0],
 			       tcpinfo->spts[1]);
 		else
-			printf(" --sport %u",
+			// printf(" --sport %u",
+			printf(" sport=%u",
 			       tcpinfo->spts[0]);
 	}
 
@@ -336,11 +361,13 @@ static void tcp_save(const void *ip, const struct xt_entry_match *match)
 			printf(" !");
 		if (tcpinfo->dpts[0]
 		    != tcpinfo->dpts[1])
-			printf(" --dport %u:%u",
+			// printf(" --dport %u:%u",
+			printf(" dport=%u:%u",
 			       tcpinfo->dpts[0],
 			       tcpinfo->dpts[1]);
 		else
-			printf(" --dport %u",
+			// printf(" --dport %u",
+			printf(" dport=%u",
 			       tcpinfo->dpts[0]);
 	}
 
@@ -355,10 +382,19 @@ static void tcp_save(const void *ip, const struct xt_entry_match *match)
 	    || (tcpinfo->invflags & XT_TCP_INV_FLAGS)) {
 		if (tcpinfo->invflags & XT_TCP_INV_FLAGS)
 			printf(" !");
-		printf(" --tcp-flags ");
-		print_tcpf(tcpinfo->flg_mask);
+		printf(" tcpflags='");
+		// print_tcpf(tcpinfo->flg_mask);
+		// printf(" ");
+		// print_tcpf(tcpinfo->flg_cmp);
+
+		// printf("0x%X 0x%X 0x%X 0x%X ", tcpinfo->flg_mask, tcpinfo->flg_cmp, tcpinfo->flg_mask & tcpinfo->flg_cmp, tcpinfo->flg_mask & ~(tcpinfo->flg_cmp) );
+
+		print_tcpf_pcn(tcpinfo->flg_mask & tcpinfo->flg_cmp, "");
 		printf(" ");
-		print_tcpf(tcpinfo->flg_cmp);
+		print_tcpf_pcn(tcpinfo->flg_mask & ~(tcpinfo->flg_cmp), "!");
+
+		printf("' ");
+
 	}
 }
 

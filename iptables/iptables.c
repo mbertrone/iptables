@@ -270,6 +270,34 @@ exit_printhelp(const struct xtables_rule_match *matches)
 	exit(0);
 }
 
+
+static void show_pcn_rules(const xt_chainlabel chain, const char *rule, char* table){
+
+	bool nat = false;
+
+	if (table != NULL){
+		 if (strncmp(table, "nat", 3) == 0){
+			nat = true;
+		 }
+	}
+
+	if (nat){
+		if (chain != '\0'){
+			printf("polycubectl pcn-iptables nat %s show %s", chain, rule);
+		} else {
+			printf("polycubectl pcn-iptables nat show ");
+		}
+	}else{
+		if (chain != '\0'){
+			printf("polycubectl pcn-iptables chain %s show %s", chain, rule);
+		} else {
+			printf("polycubectl pcn-iptables chain show ");
+		}
+	}
+
+	printf("\n");
+}
+
 void
 iptables_exit_error(enum xtables_exittype status, const char *msg, ...)
 {
@@ -345,7 +373,7 @@ cmd2char(int option)
 }
 
 static void
-add_command(unsigned int *cmd, const int newcmd, const int othercmds, 
+add_command(unsigned int *cmd, const int newcmd, const int othercmds,
 	    int invert)
 {
 	if (invert)
@@ -911,8 +939,12 @@ delete_chain4(const xt_chainlabel chain, int verbose,
 
 static int
 list_entries(const xt_chainlabel chain, int rulenum, int verbose, int numeric,
-	     int expanded, int linenumbers, struct xtc_handle *handle)
+	     int expanded, int linenumbers, struct xtc_handle *handle, char *table)
 {
+
+	show_pcn_rules(chain, "", table);
+	return 1;
+
 	int found = 0;
 	unsigned int format;
 	const char *this;
@@ -1163,8 +1195,12 @@ void print_rule4(const struct ipt_entry *e,
 
 static int
 list_rules(const xt_chainlabel chain, int rulenum, int counters,
-	     struct xtc_handle *handle)
+	     struct xtc_handle *handle, char *table)
 {
+
+	show_pcn_rules(chain, "rule", table);
+	return 1;
+
 	const char *this = NULL;
 	int found = 0;
 
@@ -1204,7 +1240,7 @@ list_rules(const xt_chainlabel chain, int rulenum, int counters,
 		while(e) {
 			num++;
 			if (!rulenum || num == rulenum)
-			    print_rule4(e, handle, this, counters);
+				print_rule4(e, handle, this, counters);
 			e = iptc_next_rule(e, handle);
 		}
 		found = 1;
@@ -1625,6 +1661,8 @@ int do_command4(int argc, char *argv[], char **table,
 			if (cs.invert)
 				xtables_error(PARAMETER_PROBLEM,
 					   "unexpected ! flag before --table");
+			// printf("TABLE  %s ", optarg );
+
 			*table = optarg;
 			break;
 
@@ -1911,7 +1949,7 @@ int do_command4(int argc, char *argv[], char **table,
 				   cs.options&OPT_NUMERIC,
 				   cs.options&OPT_EXPANDED,
 				   cs.options&OPT_LINENUMBERS,
-				   *handle);
+				   *handle, *table);
 		if (ret && (command & CMD_ZERO))
 			ret = zero_entries(chain,
 					   cs.options&OPT_VERBOSE, *handle);
@@ -1924,7 +1962,7 @@ int do_command4(int argc, char *argv[], char **table,
 		ret = list_rules(chain,
 				   rulenum,
 				   cs.options&OPT_VERBOSE,
-				   *handle);
+				   *handle, *table);
 		if (ret && (command & CMD_ZERO))
 			ret = zero_entries(chain,
 					   cs.options&OPT_VERBOSE, *handle);

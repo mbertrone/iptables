@@ -49,6 +49,9 @@ static const struct xt_option_entry SNAT_opts[] = {
 static struct ipt_natinfo *
 append_range(struct ipt_natinfo *info, const struct nf_nat_ipv4_range *range)
 {
+
+	// printf ("++ WARNING SNAT rule - not inserted (pcn-iptables compatibility not guaranteed).\n");
+	// exit(-1);
 	unsigned int size;
 
 	/* One rangesize already in struct ipt_natinfo */
@@ -241,7 +244,9 @@ static void SNAT_save(const void *ip, const struct xt_entry_target *target)
 	unsigned int i = 0;
 
 	for (i = 0; i < info->mr.rangesize; i++) {
-		printf(" --to-source ");
+		// printf(" --to-source ");
+		printf(" to-src=");
+
 		print_range(&info->mr.range[i]);
 		if (info->mr.range[i].flags & NF_NAT_RANGE_PROTO_RANDOM)
 			printf(" --random");

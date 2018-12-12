@@ -36,6 +36,15 @@
 #include <stdbool.h>
 #include <xtables.h>
 #include <libiptc/xtcshared.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+#include <netdb.h>
 
 #include "linux_list.h"
 
@@ -194,6 +203,322 @@ static void do_check(struct xtc_handle *h, unsigned int line);
 #else
 #define CHECK(h)
 #endif
+
+
+/***Utility for pcn converter: copied from iptables.c**/
+
+//Copied from iptables/iptables.c
+
+#define IP_PARTS_NATIVE(n)			\
+(unsigned int)((n)>>24)&0xFF,			\
+(unsigned int)((n)>>16)&0xFF,			\
+(unsigned int)((n)>>8)&0xFF,			\
+(unsigned int)((n)&0xFF)
+
+#define IP_PARTS(n) IP_PARTS_NATIVE(ntohl(n))
+#define delete_module(name, flags) syscall(__NR_delete_module, name, flags)
+
+//Copied from iptables/iptables.c
+
+/* This assumes that mask is contiguous, and byte-bounded. */
+static void
+print_iface(char letter, const char *iface, const unsigned char *mask,
+	    int invert)
+{
+	unsigned int i;
+
+	if (mask[0] == 0)
+		return;
+
+	// printf("%s -%c ", invert ? " !" : "", letter);
+	if (letter == 'i')
+		printf(" in-iface=", invert ? " !" : "", letter);
+	if (letter == 'o')
+		printf(" out-iface=", invert ? " !" : "", letter);
+
+	for (i = 0; i < IFNAMSIZ; i++) {
+		if (mask[i] != 0) {
+			if (iface[i] != '\0')
+				printf("%c", iface[i]);
+		} else {
+			/* we can access iface[i-1] here, because
+			 * a few lines above we make sure that mask[0] != 0 */
+			if (iface[i-1] != '\0')
+				printf("+");
+			break;
+		}
+	}
+}
+
+//Copied from iptables/iptables.c
+
+/* Print a given ip including mask if necessary. */
+static void print_ip(const char *prefix, uint32_t ip,
+		     uint32_t mask, int invert)
+{
+	uint32_t bits, hmask = ntohl(mask);
+	int i;
+
+	if (!mask && !ip && !invert)
+		return;
+
+	printf("%s %s%u.%u.%u.%u",
+		invert ? " !" : "",
+		prefix,
+		IP_PARTS(ip));
+
+	if (mask == 0xFFFFFFFFU) {
+		printf("/32");
+		return;
+	}
+
+	i    = 32;
+	bits = 0xFFFFFFFEU;
+	while (--i >= 0 && hmask != bits)
+		bits <<= 1;
+	if (i >= 0)
+		printf("/%u", i);
+	else
+		printf("/%u.%u.%u.%u", IP_PARTS(mask));
+}
+
+//Copied from iptables/iptables.c
+static void print_proto(uint16_t proto, int invert)
+{
+	if (proto) {
+		unsigned int i;
+		const char *invertstr = invert ? " !" : "";
+
+		const struct protoent *pent = getprotobynumber(proto);
+		if (pent) {
+			printf("%s l4proto=%s", invertstr, pent->p_name);
+			return;
+		}
+
+		for (i = 0; xtables_chain_protos[i].name != NULL; ++i)
+			if (xtables_chain_protos[i].num == proto) {
+				printf("%s l4proto=%s",
+				       invertstr, xtables_chain_protos[i].name);
+				return;
+			}
+
+		printf("%s l4proto=%u", invertstr, proto);
+	}
+}
+
+//Copied from iptables/iptables.c
+static int print_match_save(const struct xt_entry_match *e,
+			const struct ipt_ip *ip)
+{
+	const struct xtables_match *match =
+		xtables_find_match(e->u.user.name, XTF_TRY_LOAD, NULL);
+
+	if (match) {
+		// proto is already print in l4proto
+		// printf(" -m %s",
+		// 	match->alias ? match->alias(e) : e->u.user.name);
+
+		/* some matches don't provide a save function */
+		if (match->save && e->u.user.revision == match->revision)
+			match->save(ip, e);
+		// else if (match->save)
+		// 	printf(unsupported_rev);
+	} else {
+		if (e->u.match_size) {
+			fprintf(stderr,
+				"Can't find library for match `%s'\n",
+				e->u.user.name);
+			exit(1);
+		}
+	}
+	return 0;
+}
+
+static void print_pcn_rule(const IPT_CHAINLABEL chain, const char *action, const struct ipt_entry *rule, unsigned int rulenum, struct xtc_handle *handle){
+
+	const struct xt_entry_target *t;
+
+	char RULE_INDEX[20] = "";
+	char PREROUTING[20];
+	char POSTROUTING[20];
+
+	char REPLACE[20];
+	char INSERT[20];
+	char FLUSH[20];
+	char DELETE[20];
+
+	strcpy(REPLACE, "replace");
+	strcpy(INSERT, "insert");
+	strcpy(FLUSH, "flush");
+	strcpy(DELETE, "delete");
+	strcpy(PREROUTING, "PREROUTING");
+	strcpy(POSTROUTING, "POSTROUTING");
+
+	int replace_match;
+	int insert_match;
+	int flush_match;
+	int delete_match;
+
+	int prerouting_match;
+	int postrouting_match;
+
+	replace_match = strncmp(REPLACE, action, 7);
+	insert_match = strncmp(INSERT, action, 6);
+	flush_match = strncmp(FLUSH, action, 5);
+	delete_match = strncmp(DELETE, action, 6);
+
+	prerouting_match = strncmp(PREROUTING, chain, 10);
+	postrouting_match = strncmp(POSTROUTING, chain, 11);
+
+	if (prerouting_match == 0 || postrouting_match == 0){
+
+		if (replace_match == 0){
+			printf("polycubectl pcn-iptables nat %s add %d", chain, action, rulenum);
+		} else if (insert_match == 0){
+			printf("polycubectl pcn-iptables nat %s %s id=%d", chain, action, rulenum);
+		}else if (flush_match == 0){
+			printf("polycubectl pcn-iptables nat %s rule del", chain);
+			return;
+		}else{
+			printf("polycubectl pcn-iptables nat %s %s ", chain, action);
+			if (rulenum!=-1){
+				printf("%d ", rulenum + 1);
+			}
+		}
+
+		print_ip("src=", rule->ip.src.s_addr,rule->ip.smsk.s_addr,
+				rule->ip.invflags & IPT_INV_SRCIP);
+
+		print_ip("dst=", rule->ip.dst.s_addr, rule->ip.dmsk.s_addr,
+				rule->ip.invflags & IPT_INV_DSTIP);
+
+		print_iface('i', rule->ip.iniface, rule->ip.iniface_mask,
+			    rule->ip.invflags & IPT_INV_VIA_IN);
+
+		print_iface('o', rule->ip.outiface, rule->ip.outiface_mask,
+			    rule->ip.invflags & IPT_INV_VIA_OUT);
+
+
+		print_proto(rule->ip.proto, rule->ip.invflags & XT_INV_PROTO);
+
+		// print protocol dependent fields
+		// e.g. tcp/udp ports and/or tcp-flags
+		if (rule->target_offset)
+			IPT_MATCH_ITERATE(rule, print_match_save, &rule->ip);
+
+		// TODO verify if this approach is always safe
+		// FIXME this implementation do not support user-defined CHAINS
+		t = ipt_get_target((struct ipt_entry *)rule);
+		printf(" action=%s", t->u.user.name);
+
+		/* Print target name and targinfo part */
+		const char *target_name;
+		target_name = iptc_get_target(rule, handle);
+		// t = ipt_get_target((struct ipt_entry *)e);
+
+		if (t->u.user.name[0]) {
+
+			const struct xtables_target *target =
+				xtables_find_target(t->u.user.name, XTF_TRY_LOAD);
+
+			if (!target) {
+				fprintf(stderr, "Can't find library for target `%s'\n",
+					t->u.user.name);
+				exit(1);
+			}
+
+			if (target->save && t->u.user.revision == target->revision)
+				target->save(&rule->ip, t);
+			else if (target->save)
+				printf("unsupported rev");//unsupported_rev);
+			else {
+				/* If the target size is greater than xt_entry_target
+				* there is something to be saved, we just don't know
+				* how to print it */
+				if (t->u.target_size !=
+					sizeof(struct xt_entry_target)) {
+					fprintf(stderr, "Target `%s' is missing "
+							"save function\n",
+						t->u.user.name);
+					exit(1);
+				}
+			}
+		} //else if (target_name && (*target_name != '\0'))
+
+	} else
+	{
+		if (replace_match == 0){
+			printf("polycubectl pcn-iptables chain %s add %d", chain, action, rulenum);
+		} else if (insert_match == 0){
+			printf("polycubectl pcn-iptables chain %s %s id=%d", chain, action, rulenum);
+		}else if (flush_match == 0){
+			printf("polycubectl pcn-iptables chain %s rule del", chain);
+			return;
+		}else if ((delete_match == 0) && (rulenum!=-1)){
+			printf("polycubectl pcn-iptables chain %s rule del %d", chain, rulenum);
+			return;
+		}else{
+			printf("polycubectl pcn-iptables chain %s %s ", chain, action);
+			if (rulenum!=-1){
+				printf("%d ", rulenum + 1);
+			}
+		}
+
+		if (rule == NULL)
+			return;
+
+		print_ip("src=", rule->ip.src.s_addr,rule->ip.smsk.s_addr,
+				rule->ip.invflags & IPT_INV_SRCIP);
+
+		print_ip("dst=", rule->ip.dst.s_addr, rule->ip.dmsk.s_addr,
+				rule->ip.invflags & IPT_INV_DSTIP);
+
+
+		// TODO Define a syntax to print interfaces in pcn, still not supported.
+		// print_iface('i', rule->ip.iniface, rule->ip.iniface_mask,
+		// 	    rule->ip.invflags & IPT_INV_VIA_IN);
+
+		// print_iface('o', rule->ip.outiface, rule->ip.outiface_mask,
+		// 	    rule->ip.invflags & IPT_INV_VIA_OUT);
+
+		print_proto(rule->ip.proto, rule->ip.invflags & XT_INV_PROTO);
+
+		// print protocol dependent fields
+		// e.g. tcp/udp ports and/or tcp-flags
+		if (rule->target_offset)
+			IPT_MATCH_ITERATE(rule, print_match_save, &rule->ip);
+
+		// TODO verify if this approach is always safe
+		// FIXME this implementation do not support user-defined CHAINS
+		t = ipt_get_target((struct ipt_entry *)rule);
+		printf(" action=%s", t->u.user.name);
+	}
+
+	//printf("\n");
+	FILE *fd1 = popen("lsmod | grep xt_conntrack", "r");
+  	char buf1[16];
+  	if (fread (buf1, 1, sizeof (buf1), fd1) > 0) {
+		// Module is loaded
+		delete_module("xt_conntrack", O_NONBLOCK);
+	}
+
+	FILE *fd2 = popen("lsmod | grep nf_conntrack", "r");
+        char buf2[16];
+        if (fread (buf2, 1, sizeof (buf2), fd2) > 0) {
+                // Module is loaded
+                delete_module("nf_conntrack", O_NONBLOCK);
+        }
+
+	fclose(fd1);
+	fclose(fd2);
+}
+
+static void print_pcn_policy(const IPT_CHAINLABEL chain, const IPT_CHAINLABEL policy, const char *action){
+
+	printf("polycubectl pcn-iptables chain %s set default=%s ", chain, policy);
+
+	printf("\n");
+}
 
 
 /**********************************************************************
@@ -1578,9 +1903,9 @@ static const char *standard_target_map(int verdict)
 			return LABEL_QUEUE;
 			break;
 		default:
-			fprintf(stderr, "ERROR: %d not a valid target)\n",
-				verdict);
-			abort();
+			// fprintf(stderr, "ERROR: %d not a valid target)\n",
+			// 	verdict);
+			// abort();
 			break;
 	}
 	/* not reached */
@@ -1748,52 +2073,64 @@ TC_INSERT_ENTRY(const IPT_CHAINLABEL chain,
 	struct rule_head *r;
 	struct list_head *prev;
 
-	iptc_fn = TC_INSERT_ENTRY;
+	//Following is debug print of intercepted rule
+	DEBUGP("+Inserting Rule...\n");
 
-	if (!(c = iptcc_find_label(chain, handle))) {
-		errno = ENOENT;
-		return 0;
-	}
+	//FIXME if ipv6 rule added, probably crash
+	struct ipt_entry * rule = (struct ipt_entry *)e;
 
-	/* first rulenum index = 0
-	   first c->num_rules index = 1 */
-	if (rulenum > c->num_rules) {
-		errno = E2BIG;
-		return 0;
-	}
+	print_pcn_rule(chain, "insert", rule, rulenum, handle);
 
-	/* If we are inserting at the end just take advantage of the
-	   double linked list, insert will happen before the entry
-	   prev points to. */
-	if (rulenum == c->num_rules) {
-		prev = &c->rules;
-	} else if (rulenum + 1 <= c->num_rules/2) {
-		r = iptcc_get_rule_num(c, rulenum + 1);
-		prev = &r->list;
-	} else {
-		r = iptcc_get_rule_num_reverse(c, c->num_rules - rulenum);
-		prev = &r->list;
-	}
-
-	if (!(r = iptcc_alloc_rule(c, e->next_offset))) {
-		errno = ENOMEM;
-		return 0;
-	}
-
-	memcpy(r->entry, e, e->next_offset);
-	r->counter_map.maptype = COUNTER_MAP_SET;
-
-	if (!iptcc_map_target(handle, r, false)) {
-		free(r);
-		return 0;
-	}
-
-	list_add_tail(&r->list, prev);
-	c->num_rules++;
-
-	set_changed(handle);
-
+	//Avoid rules to get injected
 	return 1;
+
+	//COMMENT OLD CODE
+	// iptc_fn = TC_INSERT_ENTRY;
+
+	// if (!(c = iptcc_find_label(chain, handle))) {
+	// 	errno = ENOENT;
+	// 	return 0;
+	// }
+
+	// /* first rulenum index = 0
+	//    first c->num_rules index = 1 */
+	// if (rulenum > c->num_rules) {
+	// 	errno = E2BIG;
+	// 	return 0;
+	// }
+
+	// /* If we are inserting at the end just take advantage of the
+	//    double linked list, insert will happen before the entry
+	//    prev points to. */
+	// if (rulenum == c->num_rules) {
+	// 	prev = &c->rules;
+	// } else if (rulenum + 1 <= c->num_rules/2) {
+	// 	r = iptcc_get_rule_num(c, rulenum + 1);
+	// 	prev = &r->list;
+	// } else {
+	// 	r = iptcc_get_rule_num_reverse(c, c->num_rules - rulenum);
+	// 	prev = &r->list;
+	// }
+
+	// if (!(r = iptcc_alloc_rule(c, e->next_offset))) {
+	// 	errno = ENOMEM;
+	// 	return 0;
+	// }
+
+	// memcpy(r->entry, e, e->next_offset);
+	// r->counter_map.maptype = COUNTER_MAP_SET;
+
+	// if (!iptcc_map_target(handle, r, false)) {
+	// 	free(r);
+	// 	return 0;
+	// }
+
+	// list_add_tail(&r->list, prev);
+	// c->num_rules++;
+
+	// set_changed(handle);
+
+	// return 1;
 }
 
 /* Atomically replace rule `rulenum' in `chain' with `fw'. */
@@ -1806,44 +2143,56 @@ TC_REPLACE_ENTRY(const IPT_CHAINLABEL chain,
 	struct chain_head *c;
 	struct rule_head *r, *old;
 
-	iptc_fn = TC_REPLACE_ENTRY;
+	//Following is debug print of intercepted rule
+	DEBUGP("+Replacing Rule...\n");
 
-	if (!(c = iptcc_find_label(chain, handle))) {
-		errno = ENOENT;
-		return 0;
-	}
+	//FIXME if ipv6 rule added, probably crash
+	struct ipt_entry * rule = (struct ipt_entry *)e;
 
-	if (rulenum >= c->num_rules) {
-		errno = E2BIG;
-		return 0;
-	}
+	print_pcn_rule(chain, "replace", rule, rulenum, handle);
 
-	/* Take advantage of the double linked list if possible. */
-	if (rulenum + 1 <= c->num_rules/2) {
-		old = iptcc_get_rule_num(c, rulenum + 1);
-	} else {
-		old = iptcc_get_rule_num_reverse(c, c->num_rules - rulenum);
-	}
-
-	if (!(r = iptcc_alloc_rule(c, e->next_offset))) {
-		errno = ENOMEM;
-		return 0;
-	}
-
-	memcpy(r->entry, e, e->next_offset);
-	r->counter_map.maptype = COUNTER_MAP_SET;
-
-	if (!iptcc_map_target(handle, r, false)) {
-		free(r);
-		return 0;
-	}
-
-	list_add(&r->list, &old->list);
-	iptcc_delete_rule(old);
-
-	set_changed(handle);
-
+	//Avoid rules to get injected
 	return 1;
+
+	//COMMENT OLD CODE
+	// iptc_fn = TC_REPLACE_ENTRY;
+
+	// if (!(c = iptcc_find_label(chain, handle))) {
+	// 	errno = ENOENT;
+	// 	return 0;
+	// }
+
+	// if (rulenum >= c->num_rules) {
+	// 	errno = E2BIG;
+	// 	return 0;
+	// }
+
+	// /* Take advantage of the double linked list if possible. */
+	// if (rulenum + 1 <= c->num_rules/2) {
+	// 	old = iptcc_get_rule_num(c, rulenum + 1);
+	// } else {
+	// 	old = iptcc_get_rule_num_reverse(c, c->num_rules - rulenum);
+	// }
+
+	// if (!(r = iptcc_alloc_rule(c, e->next_offset))) {
+	// 	errno = ENOMEM;
+	// 	return 0;
+	// }
+
+	// memcpy(r->entry, e, e->next_offset);
+	// r->counter_map.maptype = COUNTER_MAP_SET;
+
+	// if (!iptcc_map_target(handle, r, false)) {
+	// 	free(r);
+	// 	return 0;
+	// }
+
+	// list_add(&r->list, &old->list);
+	// iptcc_delete_rule(old);
+
+	// set_changed(handle);
+
+	// return 1;
 }
 
 /* Append entry `fw' to chain `chain'.  Equivalent to insert with
@@ -1856,6 +2205,19 @@ TC_APPEND_ENTRY(const IPT_CHAINLABEL chain,
 	struct chain_head *c;
 	struct rule_head *r;
 
+	//Following is debug print of intercepted rule
+	DEBUGP("+Appending Rule...\n");
+
+	//FIXME if ipv6 rule added, probably crash
+	struct ipt_entry * rule = (struct ipt_entry *)e;
+
+	print_pcn_rule(chain, "append", rule, -1, handle);
+
+	//Avoid rules to get injected
+	return 1;
+
+	//COMMENT OLD CODE
+/*
 	iptc_fn = TC_APPEND_ENTRY;
 	if (!(c = iptcc_find_label(chain, handle))) {
 		DEBUGP("unable to find chain `%s'\n", chain);
@@ -1884,6 +2246,7 @@ TC_APPEND_ENTRY(const IPT_CHAINLABEL chain,
 	set_changed(handle);
 
 	return 1;
+*/
 }
 
 static inline int
@@ -1963,71 +2326,83 @@ static int delete_entry(const IPT_CHAINLABEL chain, const STRUCT_ENTRY *origfw,
 	struct chain_head *c;
 	struct rule_head *r, *i;
 
-	iptc_fn = TC_DELETE_ENTRY;
-	if (!(c = iptcc_find_label(chain, handle))) {
-		errno = ENOENT;
-		return 0;
-	}
+	//Following is debug print of intercepted rule
+	DEBUGP("+Deleting Rule...\n");
 
-	/* Create a rule_head from origfw. */
-	r = iptcc_alloc_rule(c, origfw->next_offset);
-	if (!r) {
-		errno = ENOMEM;
-		return 0;
-	}
+	//FIXME if ipv6 rule added, probably crash
+	struct ipt_entry * rule = (struct ipt_entry *)origfw;
 
-	memcpy(r->entry, origfw, origfw->next_offset);
-	r->counter_map.maptype = COUNTER_MAP_NOMAP;
-	if (!iptcc_map_target(handle, r, dry_run)) {
-		DEBUGP("unable to map target of rule for chain `%s'\n", chain);
-		free(r);
-		return 0;
-	} else {
-		/* iptcc_map_target increment target chain references
-		 * since this is a fake rule only used for matching
-		 * the chain references count is decremented again.
-		 */
-		if (r->type == IPTCC_R_JUMP
-		    && r->jump)
-			r->jump->references--;
-	}
+	print_pcn_rule(chain, "delete", rule, -1, handle);
 
-	list_for_each_entry(i, &c->rules, list) {
-		unsigned char *mask;
+	//Avoid rules to get injected
+	return 1;
 
-		mask = is_same(r->entry, i->entry, matchmask);
-		if (!mask)
-			continue;
+	//COMMENT OLD CODE
+	// iptc_fn = TC_DELETE_ENTRY;
+	// if (!(c = iptcc_find_label(chain, handle))) {
+	// 	errno = ENOENT;
+	// 	return 0;
+	// }
 
-		if (!target_same(r, i, mask))
-			continue;
+	// /* Create a rule_head from origfw. */
+	// r = iptcc_alloc_rule(c, origfw->next_offset);
+	// if (!r) {
+	// 	errno = ENOMEM;
+	// 	return 0;
+	// }
 
-		/* if we are just doing a dry run, we simply skip the rest */
-		if (dry_run){
-			free(r);
-			return 1;
-		}
+	// memcpy(r->entry, origfw, origfw->next_offset);
+	// r->counter_map.maptype = COUNTER_MAP_NOMAP;
+	// if (!iptcc_map_target(handle, r, dry_run)) {
+	// 	DEBUGP("unable to map target of rule for chain `%s'\n", chain);
+	// 	free(r);
+	// 	return 0;
+	// } else {
+	// 	/* iptcc_map_target increment target chain references
+	// 	 * since this is a fake rule only used for matching
+	// 	 * the chain references count is decremented again.
+	// 	 */
+	// 	if (r->type == IPTCC_R_JUMP
+	// 	    && r->jump)
+	// 		r->jump->references--;
+	// }
 
-		/* If we are about to delete the rule that is the
-		 * current iterator, move rule iterator back.  next
-		 * pointer will then point to real next node */
-		if (i == handle->rule_iterator_cur) {
-			handle->rule_iterator_cur =
-				list_entry(handle->rule_iterator_cur->list.prev,
-					   struct rule_head, list);
-		}
+	// list_for_each_entry(i, &c->rules, list) {
+	// 	unsigned char *mask;
 
-		c->num_rules--;
-		iptcc_delete_rule(i);
+	// 	mask = is_same(r->entry, i->entry, matchmask);
+	// 	if (!mask)
+	// 		continue;
 
-		set_changed(handle);
-		free(r);
-		return 1;
-	}
+	// 	if (!target_same(r, i, mask))
+	// 		continue;
 
-	free(r);
-	errno = ENOENT;
-	return 0;
+	// 	/* if we are just doing a dry run, we simply skip the rest */
+	// 	if (dry_run){
+	// 		free(r);
+	// 		return 1;
+	// 	}
+
+	// 	/* If we are about to delete the rule that is the
+	// 	 * current iterator, move rule iterator back.  next
+	// 	 * pointer will then point to real next node */
+	// 	if (i == handle->rule_iterator_cur) {
+	// 		handle->rule_iterator_cur =
+	// 			list_entry(handle->rule_iterator_cur->list.prev,
+	// 				   struct rule_head, list);
+	// 	}
+
+	// 	c->num_rules--;
+	// 	iptcc_delete_rule(i);
+
+	// 	set_changed(handle);
+	// 	free(r);
+	// 	return 1;
+	// }
+
+	// free(r);
+	// errno = ENOENT;
+	// return 0;
 }
 
 /* check whether a specified rule is present */
@@ -2054,40 +2429,50 @@ TC_DELETE_NUM_ENTRY(const IPT_CHAINLABEL chain,
 	struct chain_head *c;
 	struct rule_head *r;
 
+	//Following is debug print of intercepted rule
+	DEBUGP("+Deleting Rule...\n");
+
 	iptc_fn = TC_DELETE_NUM_ENTRY;
 
-	if (!(c = iptcc_find_label(chain, handle))) {
-		errno = ENOENT;
-		return 0;
-	}
+	struct ipt_entry * rule = NULL;
 
-	if (rulenum >= c->num_rules) {
-		errno = E2BIG;
-		return 0;
-	}
+	print_pcn_rule(chain, "delete", rule, rulenum, handle);
 
-	/* Take advantage of the double linked list if possible. */
-	if (rulenum + 1 <= c->num_rules/2) {
-		r = iptcc_get_rule_num(c, rulenum + 1);
-	} else {
-		r = iptcc_get_rule_num_reverse(c, c->num_rules - rulenum);
-	}
-
-	/* If we are about to delete the rule that is the current
-	 * iterator, move rule iterator back.  next pointer will then
-	 * point to real next node */
-	if (r == handle->rule_iterator_cur) {
-		handle->rule_iterator_cur =
-			list_entry(handle->rule_iterator_cur->list.prev,
-				   struct rule_head, list);
-	}
-
-	c->num_rules--;
-	iptcc_delete_rule(r);
-
-	set_changed(handle);
-
+	//Avoid rules to get injected
 	return 1;
+
+	// if (!(c = iptcc_find_label(chain, handle))) {
+	// 	errno = ENOENT;
+	// 	return 0;
+	// }
+
+	// if (rulenum >= c->num_rules) {
+	// 	errno = E2BIG;
+	// 	return 0;
+	// }
+
+	// /* Take advantage of the double linked list if possible. */
+	// if (rulenum + 1 <= c->num_rules/2) {
+	// 	r = iptcc_get_rule_num(c, rulenum + 1);
+	// } else {
+	// 	r = iptcc_get_rule_num_reverse(c, c->num_rules - rulenum);
+	// }
+
+	// /* If we are about to delete the rule that is the current
+	//  * iterator, move rule iterator back.  next pointer will then
+	//  * point to real next node */
+	// if (r == handle->rule_iterator_cur) {
+	// 	handle->rule_iterator_cur =
+	// 		list_entry(handle->rule_iterator_cur->list.prev,
+	// 			   struct rule_head, list);
+	// }
+
+	// c->num_rules--;
+	// iptcc_delete_rule(r);
+
+	// set_changed(handle);
+
+	// return 1;
 }
 
 /* Flushes the entries in the given chain (ie. empties chain). */
@@ -2097,21 +2482,28 @@ TC_FLUSH_ENTRIES(const IPT_CHAINLABEL chain, struct xtc_handle *handle)
 	struct chain_head *c;
 	struct rule_head *r, *tmp;
 
-	iptc_fn = TC_FLUSH_ENTRIES;
-	if (!(c = iptcc_find_label(chain, handle))) {
-		errno = ENOENT;
-		return 0;
-	}
+	const struct ipt_entry * ipt;
 
-	list_for_each_entry_safe(r, tmp, &c->rules, list) {
-		iptcc_delete_rule(r);
-	}
+	print_pcn_rule(chain, "flush", ipt , -1, handle);
 
-	c->num_rules = 0;
-
-	set_changed(handle);
-
+	//Avoid rules to get injected
 	return 1;
+
+	// iptc_fn = TC_FLUSH_ENTRIES;
+	// if (!(c = iptcc_find_label(chain, handle))) {
+	// 	errno = ENOENT;
+	// 	return 0;
+	// }
+
+	// list_for_each_entry_safe(r, tmp, &c->rules, list) {
+	// 	iptcc_delete_rule(r);
+	// }
+
+	// c->num_rules = 0;
+
+	// set_changed(handle);
+
+	// return 1;
 }
 
 /* Zeroes the counters in a chain. */
@@ -2412,40 +2804,43 @@ TC_SET_POLICY(const IPT_CHAINLABEL chain,
 	      STRUCT_COUNTERS *counters,
 	      struct xtc_handle *handle)
 {
-	struct chain_head *c;
 
-	iptc_fn = TC_SET_POLICY;
+	print_pcn_policy(chain, policy, "");
 
-	if (!(c = iptcc_find_label(chain, handle))) {
-		DEBUGP("cannot find chain `%s'\n", chain);
-		errno = ENOENT;
-		return 0;
-	}
+	// struct chain_head *c;
 
-	if (!iptcc_is_builtin(c)) {
-		DEBUGP("cannot set policy of userdefinedchain `%s'\n", chain);
-		errno = ENOENT;
-		return 0;
-	}
+	// iptc_fn = TC_SET_POLICY;
 
-	if (strcmp(policy, LABEL_ACCEPT) == 0)
-		c->verdict = -NF_ACCEPT - 1;
-	else if (strcmp(policy, LABEL_DROP) == 0)
-		c->verdict = -NF_DROP - 1;
-	else {
-		errno = EINVAL;
-		return 0;
-	}
+	// if (!(c = iptcc_find_label(chain, handle))) {
+	// 	DEBUGP("cannot find chain `%s'\n", chain);
+	// 	errno = ENOENT;
+	// 	return 0;
+	// }
 
-	if (counters) {
-		/* set byte and packet counters */
-		memcpy(&c->counters, counters, sizeof(STRUCT_COUNTERS));
-		c->counter_map.maptype = COUNTER_MAP_SET;
-	} else {
-		c->counter_map.maptype = COUNTER_MAP_NOMAP;
-	}
+	// if (!iptcc_is_builtin(c)) {
+	// 	DEBUGP("cannot set policy of userdefinedchain `%s'\n", chain);
+	// 	errno = ENOENT;
+	// 	return 0;
+	// }
 
-	set_changed(handle);
+	// if (strcmp(policy, LABEL_ACCEPT) == 0)
+	// 	c->verdict = -NF_ACCEPT - 1;
+	// else if (strcmp(policy, LABEL_DROP) == 0)
+	// 	c->verdict = -NF_DROP - 1;
+	// else {
+	// 	errno = EINVAL;
+	// 	return 0;
+	// }
+
+	// if (counters) {
+	// 	/* set byte and packet counters */
+	// 	memcpy(&c->counters, counters, sizeof(STRUCT_COUNTERS));
+	// 	c->counter_map.maptype = COUNTER_MAP_SET;
+	// } else {
+	// 	c->counter_map.maptype = COUNTER_MAP_NOMAP;
+	// }
+
+	// set_changed(handle);
 
 	return 1;
 }

@@ -577,7 +577,8 @@ static void conntrack_mt_check(struct xt_fcheck_call *cb)
 static void
 print_state(unsigned int statemask)
 {
-	const char *sep = " ";
+	// const char *sep = " ";
+	const char *sep = "";
 
 	if (statemask & XT_CONNTRACK_STATE_INVALID) {
 		printf("%sINVALID", sep);
@@ -698,7 +699,8 @@ matchinfo_print(const void *ip, const struct xt_entry_match *match, int numeric,
 	if(sinfo->flags & XT_CONNTRACK_STATE) {
         	if (sinfo->invflags & XT_CONNTRACK_STATE)
 			printf(" !");
-		printf(" %sctstate", optpfx);
+		//printf(" %sctstate", optpfx);
+		printf(" conntrack=");
 		print_state(sinfo->statemask);
 	}
 
@@ -801,9 +803,10 @@ conntrack_dump(const struct xt_conntrack_mtinfo3 *info, const char *prefix,
 	if (info->match_flags & XT_CONNTRACK_STATE) {
 		if (info->invert_flags & XT_CONNTRACK_STATE)
 			printf(" !");
-		printf(" %s%s", prefix,
-			info->match_flags & XT_CONNTRACK_STATE_ALIAS
-				? "state" : "ctstate");
+		// printf(" %s%s", prefix,
+		// 	info->match_flags & XT_CONNTRACK_STATE_ALIAS
+		// 		? "state" : "ctstate");
+		printf(" conntrack=");
 		print_state(info->state_mask);
 	}
 

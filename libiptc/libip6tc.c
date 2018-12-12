@@ -28,6 +28,8 @@ typedef unsigned int socklen_t;
 #endif
 
 #include "libiptc/libip6tc.h"
+//FIXME Added this headers for debug purposes
+#include "libiptc/libiptc.h"
 
 #define HOOK_PRE_ROUTING	NF_IP6_PRE_ROUTING
 #define HOOK_LOCAL_IN		NF_IP6_LOCAL_IN

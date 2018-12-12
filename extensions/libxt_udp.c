@@ -129,11 +129,13 @@ static void udp_save(const void *ip, const struct xt_entry_match *match)
 			printf(" !");
 		if (udpinfo->spts[0]
 		    != udpinfo->spts[1])
-			printf(" --sport %u:%u",
+			// printf(" --sport %u:%u",
+			printf(" sport=%u:%u",
 			       udpinfo->spts[0],
 			       udpinfo->spts[1]);
 		else
-			printf(" --sport %u",
+			// printf(" --sport %u",
+			printf(" sport=%u",
 			       udpinfo->spts[0]);
 	}
 
@@ -143,11 +145,13 @@ static void udp_save(const void *ip, const struct xt_entry_match *match)
 			printf(" !");
 		if (udpinfo->dpts[0]
 		    != udpinfo->dpts[1])
-			printf(" --dport %u:%u",
+			// printf(" --dport %u:%u",
+			printf(" dport=%u:%u",
 			       udpinfo->dpts[0],
 			       udpinfo->dpts[1]);
 		else
-			printf(" --dport %u",
+			// printf(" --dport %u",
+			printf(" dport=%u",
 			       udpinfo->dpts[0]);
 	}
 }
