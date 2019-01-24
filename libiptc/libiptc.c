@@ -475,11 +475,11 @@ static void print_pcn_rule(const IPT_CHAINLABEL chain, const char *action, const
 
 
 		// TODO Define a syntax to print interfaces in pcn, still not supported.
-		// print_iface('i', rule->ip.iniface, rule->ip.iniface_mask,
-		// 	    rule->ip.invflags & IPT_INV_VIA_IN);
+		print_iface('i', rule->ip.iniface, rule->ip.iniface_mask,
+			    rule->ip.invflags & IPT_INV_VIA_IN);
 
-		// print_iface('o', rule->ip.outiface, rule->ip.outiface_mask,
-		// 	    rule->ip.invflags & IPT_INV_VIA_OUT);
+		print_iface('o', rule->ip.outiface, rule->ip.outiface_mask,
+			    rule->ip.invflags & IPT_INV_VIA_OUT);
 
 		print_proto(rule->ip.proto, rule->ip.invflags & XT_INV_PROTO);
 
