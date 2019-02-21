@@ -50,7 +50,7 @@ static struct ipt_natinfo *
 append_range(struct ipt_natinfo *info, const struct nf_nat_ipv4_range *range)
 {
 
-	// printf ("++ WARNING SNAT rule - not inserted (pcn-iptables compatibility not guaranteed).\n");
+	// printf ("++ WARNING SNAT rule - not inserted (bpf-iptables compatibility not guaranteed).\n");
 	// exit(-1);
 	unsigned int size;
 

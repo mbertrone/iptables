@@ -373,14 +373,14 @@ static void print_pcn_rule(const IPT_CHAINLABEL chain, const char *action, const
 	if (prerouting_match == 0 || postrouting_match == 0){
 
 		if (replace_match == 0){
-			printf("polycubectl pcn-iptables nat %s add %d", chain, action, rulenum);
+			printf("polycubectl bpf-iptables nat %s add %d", chain, action, rulenum);
 		} else if (insert_match == 0){
-			printf("polycubectl pcn-iptables nat %s %s id=%d", chain, action, rulenum);
+			printf("polycubectl bpf-iptables nat %s %s id=%d", chain, action, rulenum);
 		}else if (flush_match == 0){
-			printf("polycubectl pcn-iptables nat %s rule del", chain);
+			printf("polycubectl bpf-iptables nat %s rule del", chain);
 			return;
 		}else{
-			printf("polycubectl pcn-iptables nat %s %s ", chain, action);
+			printf("polycubectl bpf-iptables nat %s %s ", chain, action);
 			if (rulenum!=-1){
 				printf("%d ", rulenum + 1);
 			}
@@ -448,17 +448,17 @@ static void print_pcn_rule(const IPT_CHAINLABEL chain, const char *action, const
 	} else
 	{
 		if (replace_match == 0){
-			printf("polycubectl pcn-iptables chain %s add %d", chain, action, rulenum);
+			printf("polycubectl bpf-iptables chain %s add %d", chain, action, rulenum);
 		} else if (insert_match == 0){
-			printf("polycubectl pcn-iptables chain %s %s id=%d", chain, action, rulenum);
+			printf("polycubectl bpf-iptables chain %s %s id=%d", chain, action, rulenum);
 		}else if (flush_match == 0){
-			printf("polycubectl pcn-iptables chain %s rule del", chain);
+			printf("polycubectl bpf-iptables chain %s rule del", chain);
 			return;
 		}else if ((delete_match == 0) && (rulenum!=-1)){
-			printf("polycubectl pcn-iptables chain %s rule del %d", chain, rulenum);
+			printf("polycubectl bpf-iptables chain %s rule del %d", chain, rulenum);
 			return;
 		}else{
-			printf("polycubectl pcn-iptables chain %s %s ", chain, action);
+			printf("polycubectl bpf-iptables chain %s %s ", chain, action);
 			if (rulenum!=-1){
 				printf("%d ", rulenum + 1);
 			}
@@ -515,7 +515,7 @@ static void print_pcn_rule(const IPT_CHAINLABEL chain, const char *action, const
 
 static void print_pcn_policy(const IPT_CHAINLABEL chain, const IPT_CHAINLABEL policy, const char *action){
 
-	printf("polycubectl pcn-iptables chain %s set default=%s ", chain, policy);
+	printf("polycubectl bpf-iptables chain %s set default=%s ", chain, policy);
 
 	printf("\n");
 }

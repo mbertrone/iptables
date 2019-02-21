@@ -283,15 +283,15 @@ static void show_pcn_rules(const xt_chainlabel chain, const char *rule, char* ta
 
 	if (nat){
 		if (chain != '\0'){
-			printf("polycubectl pcn-iptables nat %s show %s", chain, rule);
+			printf("polycubectl bpf-iptables nat %s show %s", chain, rule);
 		} else {
-			printf("polycubectl pcn-iptables nat show ");
+			printf("polycubectl bpf-iptables nat show ");
 		}
 	}else{
 		if (chain != '\0'){
-			printf("polycubectl pcn-iptables chain %s show %s", chain, rule);
+			printf("polycubectl bpf-iptables chain %s show %s", chain, rule);
 		} else {
-			printf("polycubectl pcn-iptables chain show ");
+			printf("polycubectl bpf-iptables chain show ");
 		}
 	}
 
